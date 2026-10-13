@@ -1,0 +1,12 @@
+# OPTIONAL: real forced alignment with WhisperX.
+#
+# WARNING (verified 2026-10-13): installing WhisperX pulls a very large stack
+# (torch, torchaudio, pyannote-audio, transformers, ctranslate2, ...) and upgrades
+# numpy to >=2.1 and protobuf to >=7. protobuf>=7 CONFLICTS with Streamlit's
+# `protobuf<7` pin and can break the dashboard. Install this ONLY in a separate
+# environment dedicated to alignment on real speech, not alongside the dashboard.
+#
+# See reports/alignment_feasibility.md. The pipeline uses the alignment "provided"
+# backend for the synthetic pilot and falls back to an explicit unavailable state
+# when WhisperX is not installed — it never fabricates timestamps.
+whisperx==3.8.6

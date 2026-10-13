@@ -1,0 +1,14 @@
+# VocalLens core dependencies (verified on Python 3.11.9, Windows 11).
+# Pinned to versions actually installed and tested in this repository.
+# numpy<2 and protobuf<7 are kept for Streamlit compatibility.
+numpy==1.26.4
+scipy==1.17.1
+librosa==0.11.0
+soundfile==0.14.0
+PyYAML==6.0.2
+pydantic==2.9.2
+plotly==7.1.0
+pronouncing==0.3.0
+pandas==2.2.3
+streamlit==1.45.1
+pytest==8.3.3

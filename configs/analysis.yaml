@@ -1,0 +1,105 @@
+# VocalLens analysis configuration.
+# Canonical starter values from ARCHITECTURE.md §9. These are explicit starting
+# values, NOT empirically validated constants. The implementation loads them from
+# here rather than duplicating constants in code (CLAUDE.md §9).
+schema_version: 1
+language: "en-US"
+
+audio:
+  analysis_sample_rate_hz: 16000
+  mono_policy: "mean_channels"
+  max_upload_mb: 50
+  min_duration_seconds: 1.0
+  max_duration_seconds: 180.0
+  clipping_peak_threshold: 0.999
+
+signal_quality:
+  estimated_snr_db:
+    minor_warning_below: 25.0
+    limited_below: 18.0
+    poor_below: 10.0
+  clipping_fraction:
+    minor_warning_at_or_above: 0.001
+    limited_at_or_above: 0.01
+    poor_at_or_above: 0.05
+  channel_rms_imbalance_db:
+    minor_warning_at_or_above: 6.0
+    limited_at_or_above: 12.0
+  poor_speech_coverage_fraction_of_minimum: 0.50
+
+framing:
+  frame_length_ms: 25
+  hop_length_ms: 10
+  rms_floor_dbfs: -80.0
+
+pause_detection:
+  noise_floor_percentile: 20
+  noise_floor_relative_margin_db: 6.0
+  absolute_silence_ceiling_dbfs: -38.0
+  min_pause_duration_ms: 250
+  merge_gap_ms: 80
+  min_noise_frames: 20
+
+alignment:
+  primary: "whisperx"
+  fallback: "mfa_if_compatible_model_available"
+  feasibility_time_budget_minutes: 30
+  min_aligned_token_coverage: 0.80
+  max_transcript_mismatch_ratio: 0.20
+
+features:
+  min_voiced_frame_coverage: 0.60
+  min_speech_frame_coverage: 0.70
+  energy_iqr_floor_db: 1.0
+  pitch_variability_metric: "iqr_semitones"
+  syllable_counter: "pronouncing_cmudict"
+
+detection:
+  same_family_merge_iou: 0.50
+  merge_gap_ms: 80
+  severity_low_upper_ratio: 1.50
+  severity_moderate_upper_ratio: 2.50
+  threshold_epsilon: 0.000001
+  display_exceedance_cap: 10.0
+  # Per-rule detection thresholds (T), with explicit units. Provisional starter
+  # values; severity uses uncapped R = D / T. Validated as finite and > epsilon.
+  thresholds:
+    pace_word_rate:
+      unit: "words_per_second"
+      value: 0.6
+    pace_phrase_duration:
+      unit: "seconds"
+      value: 0.5
+    pause_duration:
+      unit: "seconds"
+      value: 0.4
+    pitch_variation_iqr:
+      unit: "semitones"
+      value: 2.0
+    energy_dynamics_zrel:
+      unit: "zscore"
+      value: 1.0
+
+quality:
+  high_threshold: 0.80
+  medium_threshold: 0.60
+  alignment_weight: 0.35
+  feature_coverage_weight: 0.30
+  signal_quality_weight: 0.20
+  mapping_weight: 0.15
+  signal_state_scores:
+    signal_ok: 1.00
+    signal_minor_warning: 0.75
+    signal_limited: 0.50
+    signal_poor: 0.25
+    signal_invalid: 0.00
+  signal_warning_codes:
+    - signal_ok
+    - signal_minor_warning
+    - signal_limited
+    - signal_poor
+    - signal_invalid
+
+performance:
+  report_stage_timings: true
+  alignment_timeout_seconds: 180

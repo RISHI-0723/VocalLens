@@ -1,0 +1,39 @@
+# Secrets / local env
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Model caches / large downloads
+*.pt
+*.onnx
+*.ckpt
+.cache/
+models/
+~/.cache/
+
+# Generated evaluation outputs (keep the directory, ignore generated reports)
+reports/evaluation/*.json
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Private recordings: never commit real human audio.
+# The synthetic pilot under data/samples/ IS committed (it is CC0 synthetic).
+data/private/
