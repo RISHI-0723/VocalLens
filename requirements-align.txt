@@ -1,12 +1,18 @@
 # OPTIONAL: real forced alignment with WhisperX.
 #
-# WARNING (verified 2026-10-13): installing WhisperX pulls a very large stack
-# (torch, torchaudio, pyannote-audio, transformers, ctranslate2, ...) and upgrades
-# numpy to >=2.1 and protobuf to >=7. protobuf>=7 CONFLICTS with Streamlit's
-# `protobuf<7` pin and can break the dashboard. Install this ONLY in a separate
-# environment dedicated to alignment on real speech, not alongside the dashboard.
+# NOTE (re-verified 2026-10-13): whisperx==3.8.6 coexists with the pinned core
+# stack — it was observed installed alongside streamlit==1.45.1 with
+# protobuf==6.33.6 (<7) and numpy==1.26.4 (<2), all importing together. There is
+# NO protobuf/numpy version conflict with the dashboard (an earlier note claiming
+# one was incorrect and has been retracted; see reports/alignment_feasibility.md).
 #
-# See reports/alignment_feasibility.md. The pipeline uses the alignment "provided"
-# backend for the synthetic pilot and falls back to an explicit unavailable state
-# when WhisperX is not installed — it never fabricates timestamps.
+# It is still kept as a SEPARATE extra because it pulls a very large stack
+# (torch, torchaudio, pyannote-audio, transformers, ctranslate2, ...) — a
+# download-size/footprint consideration, not a conflict. The first run downloads
+# a ~360 MB wav2vec2 alignment model.
+#
+# The VocalLens WhisperX adapter decodes audio with soundfile/librosa, so it does
+# NOT require an ffmpeg binary. The pipeline uses the "provided" backend for the
+# synthetic pilot and an explicit unavailable state when WhisperX is absent — it
+# never fabricates timestamps.
 whisperx==3.8.6

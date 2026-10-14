@@ -13,47 +13,219 @@ an explicit quality assessment.
 > It is a comparison/coaching prototype — **not** a judge of ability, intent,
 > confidence, or emotion. A difference may be intentional or stylistic.
 
-## Quick start
+## Track C problem
+
+Given two recordings of the same passage, surface *where* and *how* the
+participant's delivery deviates from the reference, grounded in time and backed by
+measured features — without fabricating timestamps when alignment is unavailable,
+and without overclaiming that a measured acoustic difference proves a rhetorical
+flaw.
+
+## Architecture
+
+VocalLens is one Python analysis engine with two interchangeable front ends:
+
+```
+            ┌──────────────────────────┐        ┌──────────────────────────┐
+            │  React + Vite + TS UI     │        │  Streamlit UI (fallback)  │
+            │  frontend/  (port 5173)   │        │  app/streamlit_app.py     │
+            └────────────┬─────────────┘        └────────────┬─────────────┘
+                 HTTP /api (JSON)                   in-process import
+                         │                                   │
+            ┌────────────▼─────────────┐                     │
+            │  FastAPI adapter          │                     │
+            │  api/main.py (port 8000)  │                     │
+            └────────────┬─────────────┘                     │
+                         │          calls analyze_pair()      │
+            ┌────────────▼─────────────────────────────────────▼─────────┐
+            │  Python analysis engine — src/vocallens/                    │
+            │  pipeline.analyze_pair(AnalysisRequest) -> AnalysisResult   │
+            │  (audio_io · transcript · alignment · region_mapping ·      │
+            │   features · detection · quality · explanations · scoring · │
+            │   export)                                                   │
+            └─────────────────────────────┬───────────────────────────────┘
+                                           │
+                        configs/ (analysis.yaml, scoring.yaml)
+                        data/    (synthetic pilot dataset + annotations)
+```
+
+- **The engine owns all science.** Alignment, features, detection, severity,
+  evidence quality, and scoring live in `src/vocallens/` and are produced by the
+  single pipeline contract `analyze_pair`.
+- **FastAPI is a thin adapter.** `api/main.py` validates requests, calls
+  `analyze_pair`, and serializes with the engine's own `vocallens.export`
+  functions. It reimplements no scientific logic.
+- **The React frontend is presentation only.** It calls the API over HTTP and
+  renders the result; the Streamlit app is an alternative front end that imports
+  the engine in-process.
+
+Data flow: UI selects a sample (or uploads two files + transcript) → FastAPI
+builds an `AnalysisRequest` → `analyze_pair` returns a validated `AnalysisResult`
+→ the UI renders summary, detections, feature charts, warnings, and export links.
+
+## Prerequisites
+
+- **Python 3.11** (developed and tested on 3.11.9). The core pipeline, tests,
+  and dashboard need no secrets or network access.
+- **Node.js ≥ 18** and npm (for the React frontend; Vite 5 requires Node 18+).
+
+## Run it (two terminals)
+
+### Terminal 1 — backend (FastAPI)
 
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-api.txt
 
-python scripts/build_dataset_manifest.py   # build the synthetic pilot dataset
-python scripts/validate_dataset.py         # Gate A: dataset validation
-python -m pytest -q                        # Gate B: engine tests
-python scripts/run_evaluation.py --split test   # held-out evaluation (real metrics)
-streamlit run app/streamlit_app.py         # Gate C: dashboard
+# Build the synthetic pilot dataset the API serves (first run only):
+python scripts/build_dataset_manifest.py
+
+# Start the API on http://localhost:8000
+uvicorn api.main:app --port 8000
 ```
 
-Python **3.11** is the supported version. No secrets or network access are
-required for the core pipeline, tests, or dashboard.
+Run `uvicorn` from the **repository root** (the module path is `api.main`). Check
+it with `http://localhost:8000/api/health`.
 
-## What it does
+### Terminal 2 — frontend (React + Vite)
 
-- **Audio ingestion** — decode to 16 kHz mono analysis copy, record sample rate,
-  channels, peak, clipping; reject corrupt/out-of-limit files (no loudness
-  normalization before energy analysis).
-- **Alignment** — independent forced alignment per recording. WhisperX is the
-  optional real aligner (`requirements-align.txt`); synthetic fixtures use
-  ground-truth word boundaries labeled `provided`. Unavailable alignment yields
-  an explicit state — **timestamps are never fabricated**.
-- **Region mapping** — Levenshtein-based transcript↔audio mapping with a mismatch
-  safeguard (partial above 0.20) and phrase windows compared on each recording's
-  own clock.
-- **Features** — word/syllable rate, pauses, pitch variability (semitone IQR),
-  within-recording relative energy (dBFS), MFCC diagnostics; with signal-quality
-  and validity flags. Missing values stay unavailable, never zero.
-- **Detection** — pace / pause / pitch-variation / energy-dynamics candidate
-  deviations with normalized exceedance `R = D/T`, severity bands, same-family
-  merging and cross-family `event_group_id` grouping.
-- **Evidence quality** — heuristic index `Q = 0.35A + 0.30F + 0.20S + 0.15M`
-  (ARCHITECTURE §8.7), unavailable when ungrounded.
-- **Scoring** — prototype rubric (`configs/scoring.yaml`), piecewise-linear
-  transform, ≥3-of-4 valid-dimension rule with weight renormalization.
-- **Dashboard & exports** — Streamlit UI consuming the single pipeline; versioned
-  JSON + detections CSV.
+```bash
+cd frontend
+npm install
+npm run dev            # http://localhost:5173
+```
+
+### Frontend → backend configuration
+
+The frontend reaches the backend through a **Vite dev proxy**: in development the
+browser calls `/api/...` and `vite.config.ts` forwards those requests to
+`http://localhost:8000`, so no CORS and no extra configuration are needed as long
+as the backend runs on port 8000.
+
+For a deployed/non-default backend, set `VITE_API_BASE` to the API origin (see
+`frontend/.env.example`); the service layer in `frontend/src/services/api.ts`
+prepends it to every request. Leave it empty to use the dev proxy.
+
+### Streamlit fallback (no Node required)
+
+```bash
+pip install -r requirements.txt
+python scripts/build_dataset_manifest.py
+streamlit run app/streamlit_app.py
+```
+
+The Streamlit app imports `analyze_pair` directly and produces the same analysis
+as the API path.
+
+## API endpoints
+
+All responses are JSON unless noted. Base URL `http://localhost:8000`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/health` | Liveness + engine version. |
+| GET | `/api/dataset/samples` | List pilot passages, their shared transcript, reference id, split, and variants. |
+| GET | `/api/dataset/audio/{recording_id}` | Serve a synthetic sample's WAV (validated against the manifest; no arbitrary paths). |
+| GET | `/api/config` | Config hashes, language, detection thresholds, scoring dimensions, severity bands. |
+| POST | `/api/analyze/sample` | Analyze a pilot `{passage_id, variant}` pair using ground-truth (`provided`) alignment. |
+| POST | `/api/analyze/upload` | Analyze two uploaded recordings + shared transcript (multipart; alignment defaults to `unavailable`). |
+| GET | `/api/evaluation?split=test` | Latest held-out evaluation report, or an honest unavailable state. |
+| GET | `/api/analysis/{analysis_id}/export.json` | Download the versioned JSON for a cached analysis. |
+| GET | `/api/analysis/{analysis_id}/export.csv` | Download the detections CSV for a cached analysis. |
+
+Uploads are capped at **50 MB** per file, restricted to `.wav/.mp3/.flac/.ogg`,
+written to OS temp files, and deleted in a `finally` block after analysis.
+Results are held in a bounded in-memory cache (last 32) so the export endpoints
+can serve them; there is no database.
+
+## Using the app
+
+1. Open `http://localhost:5173` → **Analysis** workspace.
+2. **Synthetic sample pair:** pick a passage and a participant variant (the shared
+   transcript is shown read-only), or switch to **Upload recordings** and provide
+   reference + participant audio and the exact shared transcript.
+3. Click **Run analysis**.
+4. Inspect **summary cards**, **candidate deviations** (click one to highlight its
+   time region and feature evidence), **feature charts**, and **warnings**. Each
+   recording keeps its own time axis; timestamps come from the engine.
+5. **Export** the analysis as JSON or detections CSV from the Export panel.
+6. **Evaluation** and **About** pages show the held-out pilot metrics (or an honest
+   empty state) and the project's scope and limitations.
+
+## Dataset
+
+- **Location:** ships **in this repository** under `data/` (36 recordings,
+  `manifest.csv`, per-recording annotations, and the dataset card
+  `data/README.md`); ≈ 4.4 MB, fully regenerable with
+  `python scripts/build_dataset_manifest.py`.
+- **Composition:** **100% synthetic** tonal fixtures — 6 passages × 6 variants
+  (`reference`, `pace_fast`, `pace_slow`, `long_pause`, `monotone`,
+  `energy_drop`), CC0-1.0, `provenance=vocallens.synthesis`,
+  `consent=not_applicable`.
+- **Flaw families:** pace, pause, pitch_variation, energy_dynamics.
+- **Severity coverage:** per-variant intended flaw family and severity are in
+  `manifest.csv` / `annotations/`; the held-out split is passage `p06`.
+- **Splits (by passage, no leakage):** train = p01–p04, val = p05, test = p06.
+- **Validate:** `python scripts/validate_dataset.py`.
+- **Limitation:** synthetic only — no licensed/consented real-speaker audio, so it
+  does **not** demonstrate generalization to natural speech. The Track C
+  real-speaker baseline requirement is **not yet satisfied**; adding such
+  baselines is the top outstanding dataset task. See `data/README.md`.
+- **Public link status:** _pending_ — no Git remote is configured. Once published,
+  the repository URL (with `data/`) is the dataset location; no separate public
+  URL is claimed here.
+
+## Tests, evaluation, and build commands
+
+```bash
+# Python engine + API tests (run from repo root):
+python -m pytest -q
+
+# Dataset validation (Gate A):
+python scripts/validate_dataset.py
+
+# Held-out evaluation — writes actual metrics to reports/evaluation/:
+python scripts/run_evaluation.py --split test
+
+# Frontend production build (type-check + bundle):
+cd frontend && npm run build
+```
+
+## Status: implemented vs. tested vs. future
+
+**Implemented and tested**
+- Single-pipeline engine (`analyze_pair`) with features, detection, severity,
+  evidence quality, and prototype scoring; versioned JSON/CSV export.
+- FastAPI adapter with health, dataset, config, sample/upload analysis,
+  evaluation, and export endpoints — covered by `tests/test_api.py`
+  (fastapi `TestClient`, no live server needed).
+- React + Vite + TypeScript frontend; production build (`npm run build`,
+  `tsc --noEmit && vite build`) passes.
+- Dataset validation and held-out evaluation produce real metrics on the
+  synthetic pilot.
+- Streamlit fallback UI over the same pipeline.
+
+**Verified at the HTTP/build level, not yet in a browser click-through**
+- End-to-end browser workflow (sample → analyze → export) — see
+  "Known limitations" for the current verification status.
+
+**Future work**
+- Licensed/consented **real-speaker** baselines and natural-speech evaluation.
+- Validated (tuned) scoring thresholds on held-out real data.
+- Verified WhisperX real-speech **alignment accuracy** (the dependencies, model
+  load, and adapter work; accuracy on real speech is unverified).
+
+## Known limitations
+
+- **Synthetic-only data.** Metrics are feasibility evidence on tonal fixtures, not
+  proof of generalization to real speech. Scoring thresholds are untuned.
+- **Alignment accuracy unverified on real speech.** WhisperX
+  (`requirements-align.txt`) installs, the align model loads, and the adapter
+  decodes, but real-speech alignment *accuracy* is **NOT VERIFIED** (no licensed
+  real speech). Uploads default to the `unavailable` alignment state and never
+  fabricate timestamps. See `reports/alignment_feasibility.md`.
+- **Prototype scores**, not an objective measure of speaking quality.
 
 ## The one pipeline contract
 
@@ -63,33 +235,31 @@ from vocallens.schemas import AnalysisRequest
 result = analyze_pair(AnalysisRequest(reference_audio=..., participant_audio=..., transcript=...))
 ```
 
-The dashboard, evaluation script, and exporters all call `analyze_pair`. The UI
-does not reimplement alignment, detection, explanation, or scoring.
+The React frontend (via FastAPI), the Streamlit app, the evaluation script, and
+the exporters all call `analyze_pair`. No front end reimplements alignment,
+detection, explanation, or scoring.
 
 ## Repository layout
 
 ```
-configs/      analysis.yaml, scoring.yaml  (canonical, validated on load)
-data/         synthetic pilot dataset + manifest + annotations + dataset card
-src/vocallens/ pipeline and modules (schemas, audio_io, transcript, alignment,
-               region_mapping, features, detection, quality, explanations,
-               scoring, export, synthesis)
-app/          streamlit_app.py
-scripts/      build_dataset_manifest.py, validate_dataset.py, run_evaluation.py
-tests/        pytest suite (unit + integration + failure paths)
-reports/      alignment_feasibility.md, evaluation/ (generated)
-docs/         technical_report.md, demo_script.md
+api/           FastAPI adapter (main.py) over the engine
+frontend/      React + Vite + TypeScript UI (src/, vite.config.ts, package.json)
+app/           streamlit_app.py (fallback UI)
+src/vocallens/ analysis engine (pipeline + modules)
+configs/       analysis.yaml, scoring.yaml (validated on load)
+data/          synthetic pilot dataset + manifest + annotations + dataset card
+scripts/       build_dataset_manifest.py, validate_dataset.py, run_evaluation.py
+tests/         pytest suite (engine + failure paths + test_api.py)
+reports/       alignment_feasibility.md, evaluation/ (generated metrics)
+docs/          technical_report.md, demo_script.md
 ```
 
-## Honesty notes
+## Documentation
 
-- The pilot dataset is **synthetic tonal fixtures** (clearly labeled), used for
-  controlled feasibility/engineering tests. It is not natural speech and does not
-  demonstrate generalization. See `data/README.md`.
-- WhisperX real-speech feasibility is **BLOCKED** (no licensed real speech in this
-  environment; dependency conflict with the dashboard). See
-  `reports/alignment_feasibility.md`.
-- Scores are a **provisional prototype rubric**, not a validated measure of
-  speaking quality. Thresholds are not tuned on held-out data.
-
-See `CLAUDE.md`, `ARCHITECTURE.md`, and `DESIGN.md` for the canonical contracts.
+- Architecture & contracts: [`ARCHITECTURE.md`](ARCHITECTURE.md) (API boundary: §15)
+- Build/workflow discipline: [`CLAUDE.md`](CLAUDE.md)
+- UX spec: [`DESIGN.md`](DESIGN.md)
+- Technical report: [`docs/technical_report.md`](docs/technical_report.md)
+- Demo script: [`docs/demo_script.md`](docs/demo_script.md)
+- Dataset card: [`data/README.md`](data/README.md)
+- Alignment feasibility: [`reports/alignment_feasibility.md`](reports/alignment_feasibility.md)

@@ -45,6 +45,7 @@ RULE_FAMILY = {
     "pace_phrase_duration": (DetectionFamily.PACE, "pace"),
     "pause_duration": (DetectionFamily.PAUSE, "pause_management"),
     "pitch_variation_iqr": (DetectionFamily.PITCH_VARIATION, "vocal_variation"),
+    "pitch_variation_iqr_utterance": (DetectionFamily.PITCH_VARIATION, "vocal_variation"),
     "energy_dynamics_zrel": (DetectionFamily.ENERGY_DYNAMICS, "energy_control"),
 }
 
@@ -209,6 +210,57 @@ def evaluate_phrases(
                     "relative_energy_zrel", ps, pe, rs, re, config, qc,
                     "Standardized relative phrase energy differs from the reference.",
                 )
+
+    # --- Utterance-level pitch variation (ARCHITECTURE §8.6 "Pitch-variation
+    # intervals"): monotone delivery reduces pitch range across the whole
+    # utterance, which a short per-phrase window dilutes. Compare whole-recording
+    # semitone-IQR, grounded over the union of eligible mapped phrase regions.
+    eligible = [p for p in phrases if p.eligible
+                and None not in (p.reference_start, p.reference_end,
+                                 p.participant_start, p.participant_end)]
+    if eligible:
+        u_rs = min(p.reference_start for p in eligible)
+        u_re = max(p.reference_end for p in eligible)
+        u_ps = min(p.participant_start for p in eligible)
+        u_pe = max(p.participant_end for p in eligible)
+
+        _, r_iqr_u, _, _ = pitch_variability_iqr_semitones(
+            ref_ff.f0_hz, ref_ff.voiced_mask, config, int(ref_ff.speech_mask.sum()))
+        _, p_iqr_u, _, _ = pitch_variability_iqr_semitones(
+            par_ff.f0_hz, par_ff.voiced_mask, config, int(par_ff.speech_mask.sum()))
+
+        ref_u_idx = region_indices(ref_ff.times, u_rs, u_re)
+        par_u_idx = region_indices(par_ff.times, u_ps, u_pe)
+        A_u = None
+        if ref_alignment.coverage is not None and par_alignment.coverage is not None:
+            A_u = (ref_alignment.coverage + par_alignment.coverage) / 2.0
+        F_u = ((float(np.mean(ref_ff.speech_mask[ref_u_idx])) if ref_u_idx.size else 0.0)
+               + (float(np.mean(par_ff.speech_mask[par_u_idx])) if par_u_idx.size else 0.0)) / 2.0
+        M_u = float(np.mean([p.matched_fraction for p in eligible]))
+        ref_state_u, ref_S_u, ref_sw_u = signal_state_for_region(ref_audio, ref_ff, ref_u_idx, config)
+        par_state_u, par_S_u, par_sw_u = signal_state_for_region(par_audio, par_ff, par_u_idx, config)
+        state_u = worst_of(ref_state_u, par_state_u)
+        S_u = min(ref_S_u, par_S_u)
+        sw_u = ref_sw_u + par_sw_u
+
+        def qc_u() -> QualityComponents:
+            return compute_quality(A_u, F_u, S_u, M_u, state_u, config, extra_warnings=list(sw_u))
+
+        utterance_phrase = MappedPhrase(
+            phrase_id="utterance",
+            token_indices=[i for p in eligible for i in p.token_indices],
+            text="(whole compared utterance)",
+            reference_start=u_rs, reference_end=u_re,
+            participant_start=u_ps, participant_end=u_pe,
+            matched_fraction=round(M_u, 4), eligible=True,
+        )
+        _add_rule(
+            measurements, candidate_detections, "pitch_variation_iqr_utterance", utterance_phrase,
+            p_iqr_u, r_iqr_u, thresholds["pitch_variation_iqr"].value, "semitones",
+            "pitch_iqr_semitones", u_ps, u_pe, u_rs, u_re, config, qc_u,
+            "Pitch variability (semitone IQR) over the whole compared utterance differs "
+            "from the reference, consistent with reduced or increased pitch range.",
+        )
 
     detections = _group_detections(candidate_detections, config)
     return measurements, detections

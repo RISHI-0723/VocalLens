@@ -29,6 +29,20 @@ from .schemas import (
 )
 
 
+def _decode_audio_16k(audio_path: str, role: str, config: AnalysisConfig):
+    """Decode a recording to a mono float32 array at the analysis rate.
+
+    Reuses the project's own soundfile/librosa decoder (``audio_io.load_audio``)
+    so forced alignment runs on the SAME analysis copy the features use and does
+    NOT depend on an external ``ffmpeg`` binary. ``whisperx.load_audio`` shells
+    out to ffmpeg, which is frequently absent; avoiding it makes the WhisperX
+    path runnable wherever the core dependencies are installed.
+    """
+    from .audio_io import load_audio
+
+    return load_audio(audio_path, role, config).samples
+
+
 def _validate_words(
     words: List[WordTiming], duration: Optional[float]
 ) -> tuple[List[WordTiming], List[Warning]]:
@@ -162,8 +176,11 @@ def align_whisperx(
         model_a, metadata = whisperx.load_align_model(language_code=language.split("-")[0], device=device)
         if time.time() - start_t > budget:
             raise TimeoutError("alignment model load exceeded budget")
-        audio = whisperx.load_audio(audio_path)
-        seg = [{"start": 0.0, "end": float(duration or len(audio) / 16000.0), "text": transcript_text}]
+        # Decode with the project's own ffmpeg-free decoder at the analysis rate
+        # rather than whisperx.load_audio() (which requires an ffmpeg binary).
+        sr = config.audio.analysis_sample_rate_hz
+        audio = _decode_audio_16k(audio_path, role, config)
+        seg = [{"start": 0.0, "end": float(duration or len(audio) / float(sr)), "text": transcript_text}]
         result = whisperx.align(seg, model_a, metadata, audio, device, return_char_alignments=False)
         words_raw = []
         for segment in result.get("segments", []):

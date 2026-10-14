@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VocalLens — Technical Report</title>
+<style>
+@page { size: A4; margin: 13mm 14mm; }
+* { box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  font-family: "Segoe UI", Arial, sans-serif; color: #15181d;
+  font-size: 10.3px; line-height: 1.34; max-width: 820px; margin: 0 auto; padding: 18px;
+}
+h1 { font-size: 20px; margin: 0 0 4px; color: #0b1020; }
+h2 { font-size: 13.5px; margin: 11px 0 4px; border-bottom: 1px solid #d7dbe2;
+     padding-bottom: 2px; color: #0b1020; page-break-after: avoid; }
+h3 { font-size: 11.3px; margin: 8px 0 3px; color: #222; page-break-after: avoid; }
+p { margin: 3px 0; }
+ul, ol { margin: 3px 0 3px 18px; padding: 0; }
+li { margin: 1px 0; }
+code { font-family: Consolas, "Courier New", monospace; font-size: 9.2px;
+       background: #f1f3f6; padding: 0 2px; border-radius: 2px; }
+pre { background: #f6f8fa; border: 1px solid #e2e6ec; border-radius: 4px;
+      padding: 6px 8px; overflow-x: auto; page-break-inside: avoid; margin: 4px 0; }
+pre code { background: none; font-size: 8.9px; line-height: 1.3; }
+blockquote { margin: 4px 0; padding: 3px 9px; border-left: 3px solid #6b7cff;
+             background: #f4f5ff; color: #2a2f45; }
+table { border-collapse: collapse; width: 100%; margin: 4px 0; font-size: 9.2px;
+        page-break-inside: avoid; }
+th, td { border: 1px solid #d0d5dd; padding: 2px 5px; text-align: left; vertical-align: top; }
+th { background: #eef1f6; }
+hr { border: none; border-top: 1px solid #d7dbe2; margin: 8px 0; }
+a { color: #3341c4; text-decoration: none; }
+</style></head>
+<body><h1>VocalLens — Technical Report</h1>
+<p><strong>Prototype:</strong> evidence-grounded contrastive speech-delivery analysis.
+<strong>Event:</strong> IIT Mandi Multimodal AI Hackathon — Track C (Contrastive Speech
+Analytics &amp; Temporal Flaw Grounding).
+<strong>Environment:</strong> Windows 11, Python 3.11.9 (CPU only).
+<strong>Report date:</strong> 2026-10-14.</p>
+<blockquote>
+<p>Scope note: every number in this report is a <em>measured</em> value from this
+repository's current state. The evaluation was run on a <strong>synthetic tonal
+pilot dataset</strong>; it is feasibility evidence only and does <strong>not</strong> demonstrate
+generalization to real human speech. See §6.</p>
+</blockquote>
+<hr />
+<h2>1. Problem and approach</h2>
+<p>VocalLens compares a <strong>participant</strong> recording with a <strong>reference</strong> recording of
+the <em>same English text</em>, localizes measurable delivery differences in time, and
+explains each with the evidence behind it. Every reported deviation traces to a
+feature, a time region, a baseline comparison, a configured rule, a severity
+band, and an explicit evidence-quality assessment.</p>
+<p>The product is a <strong>comparison / coaching prototype</strong>, not a judge of ability,
+intent, confidence, or emotion. A difference from the reference may be
+intentional or stylistic; the system reports measured deltas, not verdicts.</p>
+<h3>Design principles (enforced in code and tests)</h3>
+<ul>
+<li>Forced alignment maps supplied words to audio; it does <strong>not</strong> verify
+  transcript correctness.</li>
+<li>Reference and participant are aligned <strong>independently</strong> and compared on their
+  own clocks, over <strong>mapped phrase regions</strong>, not identical absolute seconds.</li>
+<li>Missing/unreliable measurements are <code>null</code>/unavailable, <strong>never zero</strong>.</li>
+<li>Timestamps are never fabricated when alignment is unavailable.</li>
+<li>Scores are prototype rubric scores, not an objective measure of quality.</li>
+</ul>
+<h2>2. Architecture</h2>
+<p>A single pipeline contract is the one source of truth; the dashboard,
+evaluation script, and exporters all call it:</p>
+<pre><code class="language-python">def analyze_pair(request: AnalysisRequest) -&gt; AnalysisResult: ...
+</code></pre>
+<p>Stages (<code>src/vocallens/</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Module</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Validate / decode</td>
+<td><code>audio_io.py</code></td>
+<td>decode to 16 kHz mono analysis copy; record sample rate, channels, peak, clipping; reject corrupt/out-of-limit files; <strong>no</strong> loudness normalization before energy analysis</td>
+</tr>
+<tr>
+<td>Transcript</td>
+<td><code>transcript.py</code></td>
+<td>normalize shared text; tokenize words</td>
+</tr>
+<tr>
+<td>Alignment</td>
+<td><code>alignment.py</code></td>
+<td>independent forced alignment per recording; <code>whisperx</code> (optional) / <code>provided</code> / explicit <code>unavailable</code>/<code>partial</code>/<code>failed</code></td>
+</tr>
+<tr>
+<td>Region mapping</td>
+<td><code>region_mapping.py</code></td>
+<td>Levenshtein-based transcript↔audio mapping with a mismatch safeguard; phrase windows on each recording's own clock</td>
+</tr>
+<tr>
+<td>Features</td>
+<td><code>features.py</code></td>
+<td>word/syllable rate, pauses, pitch variability (semitone IQR), within-recording relative energy (dBFS), MFCC diagnostics; validity + signal-quality flags</td>
+</tr>
+<tr>
+<td>Detection</td>
+<td><code>detection.py</code></td>
+<td>pace / pause / pitch-variation / energy-dynamics candidates; normalized exceedance <code>R = D/T</code>; severity bands; same-family merge + cross-family <code>event_group_id</code> grouping</td>
+</tr>
+<tr>
+<td>Quality</td>
+<td><code>quality.py</code></td>
+<td>evidence-quality index <code>Q = 0.35·A + 0.30·F + 0.20·S + 0.15·M</code> (ARCHITECTURE §8.7); unavailable when ungrounded</td>
+</tr>
+<tr>
+<td>Explanations</td>
+<td><code>explanations.py</code></td>
+<td>plain-language, caveated explanation per detection</td>
+</tr>
+<tr>
+<td>Scoring</td>
+<td><code>scoring.py</code></td>
+<td>prototype rubric from <code>configs/scoring.yaml</code>; piecewise-linear transform; ≥3-of-4 valid-dimension rule with weight renormalization</td>
+</tr>
+<tr>
+<td>Export</td>
+<td><code>export.py</code></td>
+<td>versioned JSON + detections CSV</td>
+</tr>
+<tr>
+<td>Synthesis</td>
+<td><code>synthesis.py</code></td>
+<td>deterministic generation of the synthetic pilot dataset</td>
+</tr>
+</tbody>
+</table>
+<p>Schemas are typed (<code>schemas.py</code>); both YAML configs are validated on load
+(<code>config.py</code>) and reject invalid/unsupported values.</p>
+<h3>Scoring rubric (provisional, <code>configs/scoring.yaml</code>)</h3>
+<p>Four dimensions, piecewise-linear transform on aggregate normalized exceedance,
+anchored at <code>(0.0 → 100)</code>, <code>(1.0 → 70)</code>, <code>(3.0 → 0)</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>pace</td>
+<td>0.30</td>
+</tr>
+<tr>
+<td>pause_management</td>
+<td>0.30</td>
+</tr>
+<tr>
+<td>vocal_variation</td>
+<td>0.20</td>
+</tr>
+<tr>
+<td>energy_control</td>
+<td>0.20</td>
+</tr>
+</tbody>
+</table>
+<p>Overall score requires <strong>≥3 of 4</strong> valid dimensions; weights are renormalized
+over the valid set. Below that threshold the overall score is returned as
+unavailable (not zero). These anchors are <strong>not</strong> tuned on held-out data.</p>
+<h2>3. Dataset</h2>
+<p>Synthetic, controlled pilot dataset (<code>data/README.md</code>). <strong>It is not natural
+human speech.</strong></p>
+<ul>
+<li><strong>Recordings:</strong> 36 (6 passages × 6 variants). 16 kHz mono PCM_16 WAV.</li>
+<li><strong>Passages:</strong> 6 short original English sentences written for this repository.</li>
+<li><strong>Variants:</strong> <code>reference</code>, <code>pace_fast</code>, <code>pace_slow</code>, <code>long_pause</code>, <code>monotone</code>,
+  <code>energy_drop</code> (one reference + five controlled flawed variants).</li>
+<li><strong>Flaw families:</strong> pace, pause, pitch_variation, energy_dynamics.</li>
+<li><strong>Splits (by passage, no leakage):</strong> train = p01–p04 (24), val = p05 (6),
+  test / held-out = p06 (6).</li>
+<li><strong>Ground truth:</strong> each recording carries <code>word_timings</code> (known by
+  construction, consumed via the <code>provided</code> alignment backend, labeled as such)
+  and <code>flaw_intervals</code> (defined by the generating transform, not inferred after
+  observing model output).</li>
+<li><strong>License / consent:</strong> CC0-1.0; synthetic, no human recordings, no consent
+  required. Provenance: generated deterministically by <code>vocallens.synthesis</code>.</li>
+</ul>
+<p>Generation transforms (from <code>vocallens.synthesis</code>): <code>pace_fast</code> ×0.60 durations;
+<code>pace_slow</code> ×1.55; <code>long_pause</code> +1.1 s gap after the 2nd word; <code>monotone</code>
+constant F0; <code>energy_drop</code> ×0.30 amplitude on the 2nd half.</p>
+<h2>4. Alignment feasibility (honest status)</h2>
+<p><strong>Only real-speech alignment <em>accuracy</em> remains BLOCKED / NOT VERIFIED</strong>; the
+previously-reported dependency conflict was re-investigated and retracted
+(<code>reports/alignment_feasibility.md</code>, revised 2026-10-13).</p>
+<ul>
+<li><strong>No dependency conflict (claim retracted).</strong> <code>whisperx==3.8.6</code>,
+  <code>streamlit==1.45.1</code>, <code>protobuf==6.33.6</code> (<strong>&lt; 7</strong>), <code>numpy==1.26.4</code> (<strong>&lt; 2</strong>),
+  and <code>torch==2.8.0</code> were observed installed and importing together in one
+  interpreter. WhisperX 3.8.6 declares plain <code>numpy</code> (unpinned); it does not
+  force <code>numpy&gt;=2.1</code> or <code>protobuf&gt;=7</code>. WhisperX stays an optional extra
+  (<code>requirements-align.txt</code>) only because it pulls a large stack (torch, etc.),
+  not because of a version conflict.</li>
+<li><strong>Model asset loads.</strong> <code>whisperx.load_align_model</code> downloads and loads the
+  360 MB English wav2vec2 alignment model on CPU (~112 s first run, then cached).</li>
+<li><strong>ffmpeg dependency removed.</strong> The adapter previously failed at
+  <code>whisperx.load_audio()</code> with <code>FileNotFoundError</code> (missing ffmpeg) and correctly
+  degraded to <code>unavailable</code>. It now decodes via the project's soundfile/librosa
+  decoder at the analysis rate, so ffmpeg is not required; the adapter then runs
+  end to end (<code>whisperx.align()</code> executes and returns word-level timings).</li>
+<li><strong>Still not verified:</strong> forced-alignment <em>accuracy</em> on real speech — no
+  licensed/consented real English speech is available, and tonal fixtures have no
+  phonetic content, so they are not a valid accuracy test. <strong>No timestamps are
+  fabricated</strong> when alignment is unavailable.</li>
+<li>For the synthetic pilot the pipeline uses the <code>provided</code> ground-truth backend
+  (labeled, not forced-alignment output).</li>
+</ul>
+<h2>5. Evaluation (measured)</h2>
+<p>Command: <code>python scripts/run_evaluation.py --split test</code>
+Source: <code>reports/evaluation/evaluation_test_latest.json</code>
+Generated: 2026-10-14T15:14:51Z · split <code>test</code> · <strong>6 held-out cases</strong> (passage
+p06). <code>is_synthetic_pilot = true</code>. (Detection metrics and per-case results are
+deterministic across runs; only the stage runtimes in §5.3 vary run to run.)
+Results below are <strong>after</strong> adding the utterance-level pitch-variation rule
+(ARCHITECTURE §8.6 "Pitch-variation intervals"); see §5.5 for the before/after.</p>
+<blockquote>
+<p>Report note (verbatim from the run): <em>"Feasibility pilot on synthetic tonal
+fixtures; NOT evidence of generalization to real speech. Thresholds were not
+tuned on this set."</em></p>
+</blockquote>
+<h3>5.1 Per-family detection metrics</h3>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>TP</th>
+<th>FP</th>
+<th>FN</th>
+<th>Precision</th>
+<th>Recall</th>
+<th>F1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>pace</td>
+<td>2</td>
+<td>1</td>
+<td>0</td>
+<td>0.667</td>
+<td>1.000</td>
+<td>0.800</td>
+</tr>
+<tr>
+<td>pause</td>
+<td>1</td>
+<td>0</td>
+<td>0</td>
+<td>1.000</td>
+<td>1.000</td>
+<td>1.000</td>
+</tr>
+<tr>
+<td>pitch_variation</td>
+<td>1</td>
+<td>0</td>
+<td>0</td>
+<td>1.000</td>
+<td>1.000</td>
+<td>1.000</td>
+</tr>
+<tr>
+<td>energy_dynamics</td>
+<td>0</td>
+<td>0</td>
+<td>1</td>
+<td>—</td>
+<td>0.000</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3>5.2 Per-case detail</h3>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Intended</th>
+<th>Detected</th>
+<th>#Det</th>
+<th>Best IoU (intended)</th>
+<th>Ref/Par coverage</th>
+<th>Overall score</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>p06_pace_fast</td>
+<td>pace</td>
+<td>pace</td>
+<td>2</td>
+<td>0.693</td>
+<td>1.0 / 1.0</td>
+<td>79</td>
+<td>complete</td>
+</tr>
+<tr>
+<td>p06_pace_slow</td>
+<td>pace</td>
+<td>pace</td>
+<td>2</td>
+<td>0.693</td>
+<td>1.0 / 1.0</td>
+<td>86</td>
+<td>complete</td>
+</tr>
+<tr>
+<td>p06_long_pause</td>
+<td>pause</td>
+<td>pace, pause</td>
+<td>2</td>
+<td>0.374</td>
+<td>1.0 / 1.0</td>
+<td>80</td>
+<td>complete</td>
+</tr>
+<tr>
+<td>p06_monotone</td>
+<td>pitch_variation</td>
+<td>pitch_variation</td>
+<td>1</td>
+<td>0.967</td>
+<td>1.0 / 1.0</td>
+<td>96</td>
+<td>complete</td>
+</tr>
+<tr>
+<td>p06_energy_drop</td>
+<td>energy_dynamics</td>
+<td>—</td>
+<td>0</td>
+<td>0.000</td>
+<td>1.0 / 1.0</td>
+<td>99</td>
+<td>complete</td>
+</tr>
+<tr>
+<td>p06_reference_self</td>
+<td>none</td>
+<td>—</td>
+<td>0</td>
+<td>n/a</td>
+<td>1.0 / 1.0</td>
+<td>100</td>
+<td>complete</td>
+</tr>
+</tbody>
+</table>
+<h3>5.3 Runtime by stage (seconds, over 5 timed analyses)</h3>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Mean</th>
+<th>Max</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>validate / decode</td>
+<td>0.0040</td>
+<td>0.0108</td>
+</tr>
+<tr>
+<td>alignment</td>
+<td>0.0003</td>
+<td>0.0006</td>
+</tr>
+<tr>
+<td>region mapping</td>
+<td>0.0001</td>
+<td>0.0001</td>
+</tr>
+<tr>
+<td>features</td>
+<td>0.6411</td>
+<td>3.1168</td>
+</tr>
+<tr>
+<td>detection</td>
+<td>0.0022</td>
+<td>0.0024</td>
+</tr>
+<tr>
+<td>scoring</td>
+<td>0.0001</td>
+<td>0.0001</td>
+</tr>
+<tr>
+<td><strong>total</strong></td>
+<td><strong>0.7566</strong></td>
+<td><strong>3.5383</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Feature extraction dominates runtime; alignment is near-free because the pilot
+uses the <code>provided</code> backend.</p>
+<h3>5.4 Reading the results (honest interpretation)</h3>
+<ul>
+<li><strong>Pace and pause families fire correctly</strong> on p06 (recall 1.0), with usable
+  temporal localization (IoU 0.69 for pace; 0.37 for the inserted pause). The
+  single pace false positive and the pace flag on <code>long_pause</code> reflect that an
+  inserted pause also perturbs local word rate — association, grouped under a
+  shared <code>event_group_id</code>, not a causal claim.</li>
+<li><strong>Pitch variation now fires</strong> on <code>p06_monotone</code> (recall 1.0, precision 1.0,
+  IoU 0.967) via the whole-utterance semitone-IQR rule added in §8.6. Monotone
+  delivery reduces pitch range <em>across</em> the utterance (ref IQR 2.84 → participant
+  0.028 semitones); the per-phrase comparison alone diluted it below threshold.
+  No thresholds were tuned on the held-out set — the rule compares the same
+  semitone-IQR metric at utterance scale.</li>
+<li><strong>Energy-dynamics did not fire</strong> on p06 (recall 0.0). Root cause is diagnostic,
+  not a code defect: <code>z_rel</code> standardizes within-recording by design (to avoid
+  gain/distance confounds), so the synthetic <code>energy_drop</code> — largely a <em>global</em>
+  loudness reduction (median −22 → −29 dBFS) — produces only a small per-phrase
+  relative contrast (R≈0.21 &lt; 1.0), compounded by an inflated recording energy
+  IQR (~14 dB from the synthetic envelopes). Catching it would need a different
+  (absolute/trend) energy rule and non-synthetic data; deferred (see §7).</li>
+<li><strong><code>reference_self</code> (reference vs. itself) scores 100 with zero detections</strong> — a
+  sanity check that the pipeline does not invent deviations where none exist, and
+  the utterance pitch rule adds no false positive here.</li>
+<li>Overall scores remain a rubric transform, not a validated quality measure.</li>
+</ul>
+<h3>5.5 Before/after the utterance-level pitch rule</h3>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Before (per-phrase pitch only)</th>
+<th>After (+ utterance rule)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>pitch_variation</td>
+<td>TP 0, FN 1, recall 0.0, F1 —</td>
+<td>TP 1, FN 0, <strong>recall 1.0, F1 1.0</strong></td>
+</tr>
+<tr>
+<td>p06_monotone case</td>
+<td>0 detections, IoU 0.000, score 98</td>
+<td>1 detection, <strong>IoU 0.967</strong>, score 96</td>
+</tr>
+<tr>
+<td>pace / pause / energy</td>
+<td>unchanged</td>
+<td>unchanged (no new false positives)</td>
+</tr>
+</tbody>
+</table>
+<p>The change is a structural detection fix (new interval for an existing metric),
+not threshold tuning on the test split.</p>
+<h2>6. Tests</h2>
+<p><code>python -m pytest -q</code> → <strong>80 passed</strong> (Python 3.11.9). Coverage spans transcript
+normalization, region mapping and mismatch boundaries, config validation,
+schemas, features, detection (including the utterance-level pitch rule and its
+no-false-positive guard), quality, scoring, export, alignment
+fallback/unavailable paths and the ffmpeg-free WhisperX decode, the end-to-end
+pipeline (short, silent, noisy, clipped, mismatched, partial, and failed cases),
+and the FastAPI boundary (<code>tests/test_api.py</code>: health, samples, config,
+sample/upload analysis, evaluation, exports, and upload-validation/error paths
+via the fastapi <code>TestClient</code>).</p>
+<h2>7. Limitations</h2>
+<ul>
+<li><strong>Synthetic tonal fixtures</strong>, not natural speech: no formants, coarticulation,
+  real prosody, room acoustics, or microphone variation. Results are feasibility
+  evidence only and do not generalize to real speakers.</li>
+<li><strong>Real-speech forced-alignment accuracy is NOT VERIFIED</strong> (no licensed/consented
+  real audio). The dependency conflict previously cited was retracted: WhisperX
+  installs alongside the dashboard, the model loads, and the adapter runs without
+  ffmpeg — only a valid real-speech accuracy test is missing (§4).</li>
+<li><strong>Scores are provisional and unvalidated</strong>; thresholds are not tuned on
+  held-out data; no psychometric claims.</li>
+<li><strong>Energy-dynamics detection is under-sensitive</strong> on this pilot (recall 0.0 on
+  p06); the metric is intentionally invariant to global loudness, so a synthetic
+  uniform-amplitude drop is a poor test of it (see §5.4).</li>
+<li><strong>Pilot size is tiny</strong> (6 held-out cases, single synthetic voice per passage).
+  No inter-annotator agreement is reported because labels are defined by the
+  generating transform, not by multiple human annotators.</li>
+</ul>
+<h2>8. Next steps for a real evaluation</h2>
+<ol>
+<li>Replace synthetic fixtures with <strong>consented, licensed human recordings</strong>
+   (≥2 speakers, split by passage) under <code>data/private/</code> (gitignored).</li>
+<li>Install WhisperX from <code>requirements-align.txt</code> in a <strong>separate alignment
+   environment</strong>; run the 3-clip feasibility gate on real speech and report
+   alignment coverage and temporal error.</li>
+<li>Add an absolute/trend-based energy rule (or better, non-synthetic data) so
+   energy-dynamics is testable, and calibrate any thresholds on a <strong>validation</strong>
+   split (never the held-out test set), then re-run the held-out evaluation.</li>
+<li>Report per-family metrics, temporal IoU/overlap, alignment coverage, failure
+   modes, and runtime on the real set; treat results as feasibility evidence
+   until sample size supports stronger claims.</li>
+</ol>
+<h2>9. Reproducibility</h2>
+<pre><code class="language-bash">python -m venv .venv &amp;&amp; . .venv/Scripts/activate   # (macOS/Linux: source .venv/bin/activate)
+pip install -r requirements.txt                    # core engine + Streamlit
+python scripts/build_dataset_manifest.py           # build synthetic pilot
+python scripts/validate_dataset.py                 # Gate A: dataset validation
+python -m pytest -q                                # Gate B: 80 tests (engine + API)
+python scripts/run_evaluation.py --split test      # held-out metrics
+
+# Primary front end — React + FastAPI (two terminals):
+pip install -r requirements-api.txt                # adds fastapi + uvicorn
+uvicorn api.main:app --port 8000                   # terminal 1: API on :8000
+cd frontend &amp;&amp; npm install &amp;&amp; npm run dev          # terminal 2: UI on :5173
+
+# Fallback front end — Streamlit (no Node needed):
+streamlit run app/streamlit_app.py                 # Gate C: dashboard
+</code></pre>
+<p>Each analysis JSON export carries software/config/model versions, config hashes,
+and per-stage timings for provenance. Canonical contracts live in <code>CLAUDE.md</code>,
+<code>ARCHITECTURE.md</code>, and <code>DESIGN.md</code>.</p></body></html>

@@ -391,11 +391,14 @@ needed. Replace with consented human recordings for a real evaluation.
 
 **Known limitations**
 - Synthetic fixtures are tonal, not natural speech — feasibility evidence only.
-- Relative-energy and per-phrase pitch rules are the least sensitive families
-  (see held-out metrics on the Evaluation page); differences still appear in the
-  feature comparison.
-- WhisperX conflicts with Streamlit's protobuf pin; alignment on uploaded real
-  audio requires a separate environment (`requirements-align.txt`).
+- Energy-dynamics (relative energy) is the least sensitive family on the pilot
+  (held-out recall 0.0; see the Evaluation page). Pitch variation is now caught
+  at the whole-utterance scale as well as per phrase. Differences still appear in
+  the feature comparison regardless of whether a rule fires.
+- WhisperX installs alongside the dashboard (no protobuf/numpy conflict) and the
+  adapter runs without ffmpeg, but it pulls a large stack so it stays a separate
+  extra (`requirements-align.txt`). Real-speech alignment accuracy is not yet
+  verified (no licensed real speech).
 
 **Setup & commands**
 ```

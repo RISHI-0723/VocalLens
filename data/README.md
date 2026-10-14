@@ -53,3 +53,63 @@ Each recording has an annotation in `annotations/<recording_id>.json` with:
 - **Consent/privacy:** not applicable — no human recordings. No private audio is
   committed. Replacing these fixtures with consented human recordings is the
   documented next step for a real evaluation.
+
+## Manifest data dictionary (`manifest.csv`, one row per recording)
+| Column | Meaning |
+|---|---|
+| `recording_id` | Unique id, e.g. `p06_monotone`. Matches `annotations/<id>.json` and the WAV filename. |
+| `passage_id` | Passage group `p01`–`p06`. |
+| `role` | `reference` or `participant`. |
+| `speaker_id` | Synthetic voice id (one synthetic voice per passage here). |
+| `variant` | `reference`, `pace_fast`, `pace_slow`, `long_pause`, `monotone`, `energy_drop`. |
+| `relative_path` | Audio path under `data/`, e.g. `samples/p06/p06_monotone.wav`. |
+| `transcript_id` / `transcript_hash` | Shared-text id and a stable hash of the normalized transcript (identical within a passage). |
+| `intended_flaw_family` | `none` for references; else `pace`/`pause`/`pitch_variation`/`energy_dynamics`. |
+| `intended_severity` | Operational severity of the intended flaw (`none` for references). |
+| `recording_method` | `synthetic_tonal` (how the audio was produced). |
+| `transform_note` | The exact transform applied (e.g. `durations x0.60`). |
+| `review_status` | Human/automated review state of the record. |
+| `annotation_notes` | Free-text notes. |
+| `license` / `consent` / `provenance` | `CC0-1.0` / `not_applicable` / `vocallens.synthesis`. |
+| `split` | `train` (p01–p04), `val` (p05), `test` (p06). Split is by passage — no leakage. |
+| `quality_warnings` | Any audio quality flags raised at generation. |
+| `sample_rate_hz` / `duration_seconds` | `16000` and the recording length. |
+
+**Ground truth vs. prediction:** `intended_flaw_family`/`intended_severity`
+(manifest) and `flaw_intervals` (annotations) are **ground truth from the
+generating transform**. Detector outputs are produced only at analysis time and
+are never written back into the dataset.
+
+## Example annotation (`annotations/p06_monotone.json`)
+```json
+{
+  "recording_id": "p06_monotone",
+  "passage_id": "p06",
+  "variant": "monotone",
+  "transcript": "Numbers alone rarely tell the whole story.",
+  "transcript_hash": "8d11daf3ee076eae",
+  "word_timings": [{"text": "Numbers", "start": 0.0, "end": 0.3364},
+                   {"text": "alone", "start": 0.4364, "end": 0.7732}, "…"],
+  "flaw_intervals": [{"family": "pitch_variation", "start": 0.0, "end": 3.0419,
+                      "note": "reduced pitch variation"}],
+  "transform_note": "pitch flattened to constant F0",
+  "provenance": "vocallens.synthesis",
+  "is_synthetic": true
+}
+```
+`word_timings` are known by construction (consumed via the `provided` alignment
+backend, labeled as such); `flaw_intervals` come from the transform, not from
+observing model output. Interval ends may differ from the exact frame-count
+duration by well under one 16 kHz sample (≤ 0.03 ms) due to timestamp rounding.
+
+## Validate & regenerate
+```bash
+python scripts/build_dataset_manifest.py   # (re)build the 36-recording pilot
+python scripts/validate_dataset.py         # release gate
+```
+Expected validator output:
+```
+DATASET VALIDATION: PASS - 36 recordings, splits {'train': 24, 'val': 6, 'test': 6}
+```
+A failed check exits non-zero and prints the failing records; treat that as a
+failed release gate.

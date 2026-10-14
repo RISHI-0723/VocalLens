@@ -4,7 +4,7 @@
 **Event:** IIT Mandi Multimodal AI Hackathon — Track C (Contrastive Speech
 Analytics & Temporal Flaw Grounding).
 **Environment:** Windows 11, Python 3.11.9 (CPU only).
-**Report date:** 2026-10-13.
+**Report date:** 2026-10-14.
 
 > Scope note: every number in this report is a *measured* value from this
 > repository's current state. The evaluation was run on a **synthetic tonal
@@ -102,31 +102,40 @@ constant F0; `energy_drop` ×0.30 amplitude on the 2nd half.
 
 ## 4. Alignment feasibility (honest status)
 
-**WhisperX real-speech feasibility gate: BLOCKED** — recorded as a blocker, not
-a PASS (`reports/alignment_feasibility.md`).
+**Only real-speech alignment *accuracy* remains BLOCKED / NOT VERIFIED**; the
+previously-reported dependency conflict was re-investigated and retracted
+(`reports/alignment_feasibility.md`, revised 2026-10-13).
 
-- WhisperX installs and imports (`whisperx==3.8.6`), but its dependency set
-  requires `numpy>=2.1` and `protobuf>=7`, which **conflicts with Streamlit's
-  `protobuf<7` pin** and would break the dashboard. WhisperX is therefore an
-  optional, separately-installed path (`requirements-align.txt`), not part of
-  the core install.
-- The canonical 3-clip gate needs **licensed/consented real English speech**,
-  which is not available in this environment and may not be downloaded without
-  verified licensing/consent. Running WhisperX against tonal fixtures (which
-  lack phonetic content) would not produce an interpretable result, so it was
-  not reported as one.
+- **No dependency conflict (claim retracted).** `whisperx==3.8.6`,
+  `streamlit==1.45.1`, `protobuf==6.33.6` (**< 7**), `numpy==1.26.4` (**< 2**),
+  and `torch==2.8.0` were observed installed and importing together in one
+  interpreter. WhisperX 3.8.6 declares plain `numpy` (unpinned); it does not
+  force `numpy>=2.1` or `protobuf>=7`. WhisperX stays an optional extra
+  (`requirements-align.txt`) only because it pulls a large stack (torch, etc.),
+  not because of a version conflict.
+- **Model asset loads.** `whisperx.load_align_model` downloads and loads the
+  360 MB English wav2vec2 alignment model on CPU (~112 s first run, then cached).
+- **ffmpeg dependency removed.** The adapter previously failed at
+  `whisperx.load_audio()` with `FileNotFoundError` (missing ffmpeg) and correctly
+  degraded to `unavailable`. It now decodes via the project's soundfile/librosa
+  decoder at the analysis rate, so ffmpeg is not required; the adapter then runs
+  end to end (`whisperx.align()` executes and returns word-level timings).
+- **Still not verified:** forced-alignment *accuracy* on real speech — no
+  licensed/consented real English speech is available, and tonal fixtures have no
+  phonetic content, so they are not a valid accuracy test. **No timestamps are
+  fabricated** when alignment is unavailable.
 - For the synthetic pilot the pipeline uses the `provided` ground-truth backend
-  (labeled, not forced-alignment output). The WhisperX adapter is implemented
-  and exercised by unit tests on the fallback/unavailable paths. **No timestamps
-  are fabricated** when alignment is unavailable.
+  (labeled, not forced-alignment output).
 
 ## 5. Evaluation (measured)
 
 Command: `python scripts/run_evaluation.py --split test`
 Source: `reports/evaluation/evaluation_test_latest.json`
-Generated: 2026-10-13T04:58:22Z · split `test` · **6 held-out cases** (passage
+Generated: 2026-10-14T15:14:51Z · split `test` · **6 held-out cases** (passage
 p06). `is_synthetic_pilot = true`. (Detection metrics and per-case results are
 deterministic across runs; only the stage runtimes in §5.3 vary run to run.)
+Results below are **after** adding the utterance-level pitch-variation rule
+(ARCHITECTURE §8.6 "Pitch-variation intervals"); see §5.5 for the before/after.
 
 > Report note (verbatim from the run): *"Feasibility pilot on synthetic tonal
 > fixtures; NOT evidence of generalization to real speech. Thresholds were not
@@ -138,7 +147,7 @@ deterministic across runs; only the stage runtimes in §5.3 vary run to run.)
 |---|---|---|---|---|---|---|
 | pace | 2 | 1 | 0 | 0.667 | 1.000 | 0.800 |
 | pause | 1 | 0 | 0 | 1.000 | 1.000 | 1.000 |
-| pitch_variation | 0 | 0 | 1 | — | 0.000 | — |
+| pitch_variation | 1 | 0 | 0 | 1.000 | 1.000 | 1.000 |
 | energy_dynamics | 0 | 0 | 1 | — | 0.000 | — |
 
 ### 5.2 Per-case detail
@@ -148,7 +157,7 @@ deterministic across runs; only the stage runtimes in §5.3 vary run to run.)
 | p06_pace_fast | pace | pace | 2 | 0.693 | 1.0 / 1.0 | 79 | complete |
 | p06_pace_slow | pace | pace | 2 | 0.693 | 1.0 / 1.0 | 86 | complete |
 | p06_long_pause | pause | pace, pause | 2 | 0.374 | 1.0 / 1.0 | 80 | complete |
-| p06_monotone | pitch_variation | — | 0 | 0.000 | 1.0 / 1.0 | 98 | complete |
+| p06_monotone | pitch_variation | pitch_variation | 1 | 0.967 | 1.0 / 1.0 | 96 | complete |
 | p06_energy_drop | energy_dynamics | — | 0 | 0.000 | 1.0 / 1.0 | 99 | complete |
 | p06_reference_self | none | — | 0 | n/a | 1.0 / 1.0 | 100 | complete |
 
@@ -156,13 +165,13 @@ deterministic across runs; only the stage runtimes in §5.3 vary run to run.)
 
 | Stage | Mean | Max |
 |---|---|---|
-| validate / decode | 0.0062 | 0.015 |
-| alignment | 0.0004 | 0.0005 |
-| region mapping | 0.0002 | 0.0004 |
-| features | 0.9227 | 4.4441 |
-| detection | 0.0056 | 0.0069 |
-| scoring | 0.0002 | 0.0003 |
-| **total** | **1.1219** | **5.094** |
+| validate / decode | 0.0040 | 0.0108 |
+| alignment | 0.0003 | 0.0006 |
+| region mapping | 0.0001 | 0.0001 |
+| features | 0.6411 | 3.1168 |
+| detection | 0.0022 | 0.0024 |
+| scoring | 0.0001 | 0.0001 |
+| **total** | **0.7566** | **3.5383** |
 
 Feature extraction dominates runtime; alignment is near-free because the pilot
 uses the `provided` backend.
@@ -173,37 +182,61 @@ uses the `provided` backend.
   single pace false positive and the pace flag on `long_pause` reflect that an
   inserted pause also perturbs local word rate — association, grouped under a
   shared `event_group_id`, not a causal claim.
-- **Pitch-variation and energy-dynamics did not fire** on p06 at current
-  thresholds (recall 0.0). These are the least-sensitive families; the
-  underlying differences are still visible in the feature comparison, but they
-  did not cross the configured detection thresholds on these synthetic cases.
-  Thresholds were deliberately **not** tuned on this held-out set.
+- **Pitch variation now fires** on `p06_monotone` (recall 1.0, precision 1.0,
+  IoU 0.967) via the whole-utterance semitone-IQR rule added in §8.6. Monotone
+  delivery reduces pitch range *across* the utterance (ref IQR 2.84 → participant
+  0.028 semitones); the per-phrase comparison alone diluted it below threshold.
+  No thresholds were tuned on the held-out set — the rule compares the same
+  semitone-IQR metric at utterance scale.
+- **Energy-dynamics did not fire** on p06 (recall 0.0). Root cause is diagnostic,
+  not a code defect: `z_rel` standardizes within-recording by design (to avoid
+  gain/distance confounds), so the synthetic `energy_drop` — largely a *global*
+  loudness reduction (median −22 → −29 dBFS) — produces only a small per-phrase
+  relative contrast (R≈0.21 < 1.0), compounded by an inflated recording energy
+  IQR (~14 dB from the synthetic envelopes). Catching it would need a different
+  (absolute/trend) energy rule and non-synthetic data; deferred (see §7).
 - **`reference_self` (reference vs. itself) scores 100 with zero detections** — a
-  sanity check that the pipeline does not invent deviations where none exist.
-- The high overall scores for undetected-flaw cases (98–99) are a direct
-  consequence of no detections crossing thresholds, and underline that the
-  prototype score is a rubric transform, not a validated quality measure.
+  sanity check that the pipeline does not invent deviations where none exist, and
+  the utterance pitch rule adds no false positive here.
+- Overall scores remain a rubric transform, not a validated quality measure.
+
+### 5.5 Before/after the utterance-level pitch rule
+
+| Family | Before (per-phrase pitch only) | After (+ utterance rule) |
+|---|---|---|
+| pitch_variation | TP 0, FN 1, recall 0.0, F1 — | TP 1, FN 0, **recall 1.0, F1 1.0** |
+| p06_monotone case | 0 detections, IoU 0.000, score 98 | 1 detection, **IoU 0.967**, score 96 |
+| pace / pause / energy | unchanged | unchanged (no new false positives) |
+
+The change is a structural detection fix (new interval for an existing metric),
+not threshold tuning on the test split.
 
 ## 6. Tests
 
-`python -m pytest -q` → **63 passed** (Python 3.11.9). Coverage spans transcript
+`python -m pytest -q` → **80 passed** (Python 3.11.9). Coverage spans transcript
 normalization, region mapping and mismatch boundaries, config validation,
-schemas, features, detection, quality, scoring, export, alignment
-fallback/unavailable paths, and the end-to-end pipeline, including short,
-silent, noisy, clipped, mismatched, partial, and failed cases.
+schemas, features, detection (including the utterance-level pitch rule and its
+no-false-positive guard), quality, scoring, export, alignment
+fallback/unavailable paths and the ffmpeg-free WhisperX decode, the end-to-end
+pipeline (short, silent, noisy, clipped, mismatched, partial, and failed cases),
+and the FastAPI boundary (`tests/test_api.py`: health, samples, config,
+sample/upload analysis, evaluation, exports, and upload-validation/error paths
+via the fastapi `TestClient`).
 
 ## 7. Limitations
 
 - **Synthetic tonal fixtures**, not natural speech: no formants, coarticulation,
   real prosody, room acoustics, or microphone variation. Results are feasibility
   evidence only and do not generalize to real speakers.
-- **No real-speech forced alignment was evaluated** (gate BLOCKED): no
-  licensed/consented real audio; WhisperX conflicts with the dashboard's
-  protobuf pin and must run in a separate environment.
+- **Real-speech forced-alignment accuracy is NOT VERIFIED** (no licensed/consented
+  real audio). The dependency conflict previously cited was retracted: WhisperX
+  installs alongside the dashboard, the model loads, and the adapter runs without
+  ffmpeg — only a valid real-speech accuracy test is missing (§4).
 - **Scores are provisional and unvalidated**; thresholds are not tuned on
   held-out data; no psychometric claims.
-- **Pitch-variation and energy-dynamics detection are under-sensitive** at
-  current thresholds on this pilot (recall 0.0 on p06).
+- **Energy-dynamics detection is under-sensitive** on this pilot (recall 0.0 on
+  p06); the metric is intentionally invariant to global loudness, so a synthetic
+  uniform-amplitude drop is a poor test of it (see §5.4).
 - **Pilot size is tiny** (6 held-out cases, single synthetic voice per passage).
   No inter-annotator agreement is reported because labels are defined by the
   generating transform, not by multiple human annotators.
@@ -215,7 +248,8 @@ silent, noisy, clipped, mismatched, partial, and failed cases.
 2. Install WhisperX from `requirements-align.txt` in a **separate alignment
    environment**; run the 3-clip feasibility gate on real speech and report
    alignment coverage and temporal error.
-3. Calibrate pitch-variation and energy-dynamics thresholds on a **validation**
+3. Add an absolute/trend-based energy rule (or better, non-synthetic data) so
+   energy-dynamics is testable, and calibrate any thresholds on a **validation**
    split (never the held-out test set), then re-run the held-out evaluation.
 4. Report per-family metrics, temporal IoU/overlap, alignment coverage, failure
    modes, and runtime on the real set; treat results as feasibility evidence
@@ -225,11 +259,18 @@ silent, noisy, clipped, mismatched, partial, and failed cases.
 
 ```bash
 python -m venv .venv && . .venv/Scripts/activate   # (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements.txt
+pip install -r requirements.txt                    # core engine + Streamlit
 python scripts/build_dataset_manifest.py           # build synthetic pilot
 python scripts/validate_dataset.py                 # Gate A: dataset validation
-python -m pytest -q                                # Gate B: 63 tests
+python -m pytest -q                                # Gate B: 80 tests (engine + API)
 python scripts/run_evaluation.py --split test      # held-out metrics
+
+# Primary front end — React + FastAPI (two terminals):
+pip install -r requirements-api.txt                # adds fastapi + uvicorn
+uvicorn api.main:app --port 8000                   # terminal 1: API on :8000
+cd frontend && npm install && npm run dev          # terminal 2: UI on :5173
+
+# Fallback front end — Streamlit (no Node needed):
 streamlit run app/streamlit_app.py                 # Gate C: dashboard
 ```
 

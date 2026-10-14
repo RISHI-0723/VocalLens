@@ -315,6 +315,14 @@ Initial families:
 3. **Pitch variation:** semitone-IQR differs when voiced coverage is adequate.
 4. **Energy dynamics:** standardized relative phrase energy differs when signal quality permits.
 
+#### Pitch-variation intervals
+Pitch variation is evaluated at **two intervals**, because reduced pitch variation (monotone delivery) is a property of the delivery as a whole and its variation lives *across* phrases, not only within one short phrase window:
+
+- **Per mapped phrase** (`pitch_variation_iqr`): compares the participant's and reference's semitone-IQR within each eligible phrase region.
+- **Whole compared utterance** (`pitch_variation_iqr_utterance`): compares the semitone-IQR computed over all voiced frames of each recording, grounded temporally over the union of the eligible mapped phrase regions.
+
+Both rules use the same semitone-IQR feature and the same `pitch_variation_iqr` threshold, each produces its own normalized exceedance `R = D/T`, and both feed the `vocal_variation` scoring dimension. The utterance-level rule is valid only when whole-recording voiced coverage is adequate on both recordings; otherwise it is recorded as an invalid (unavailable) measurement, never zero. (Config: `configs/analysis.yaml` reuses the single `detection.thresholds.pitch_variation_iqr` value for both intervals; no new threshold key is introduced.)
+
 #### Normalize pace exceedance
 Each pace rule chooses exactly one primary measurement and stores its unit:
 - Word-rate rule: `D = abs(participant_words_per_second - reference_words_per_second)` in words/s; `T` is a positive threshold in words/s.
@@ -656,3 +664,35 @@ Build Streamlit UI, evidence views, timestamp/manual playback workflow, JSON/CSV
 - [ ] JSON/CSV exports are versioned and complete.
 - [ ] Evaluation contains actual measured results only.
 - [ ] Report, demo, repository, and dataset are ready for review.
+
+## 15. HTTP API Boundary (FastAPI adapter)
+
+`api/main.py` is a thin HTTP adapter around the existing engine; it adds no
+scientific logic.
+
+- **Layer ownership.** The engine (`src/vocallens/`) owns all analysis, features,
+  detection, severity, evidence quality, and scoring. The API only validates
+  input, calls `vocallens.pipeline.analyze_pair`, and serializes results with
+  `vocallens.export.{to_json, to_detections_csv}`. The React frontend
+  (`frontend/`) is presentation only; the Streamlit app remains an in-process
+  front end over the same `analyze_pair`.
+- **Request/response flow.** A UI request (`/api/analyze/sample` with
+  `{passage_id, variant}`, or multipart `/api/analyze/upload` with reference +
+  participant audio and the shared transcript) is turned into an
+  `AnalysisRequest`; `analyze_pair` returns a validated `AnalysisResult`, which is
+  wrapped as `{analysis_id, mode, provenance, result}` where `result` is the
+  engine's own JSON schema. `AnalysisResult` and `analyze_pair` are unchanged by
+  the API.
+- **Upload constraints & cleanup.** Uploads are restricted to
+  `.wav/.mp3/.flac/.ogg`, capped at 50 MB per file (matching
+  `analysis.yaml`), written to OS temp files, and removed in a `finally` block
+  after analysis. Alignment defaults to `unavailable` for uploads so opening the
+  app never triggers a model download; synthetic samples use the `provided`
+  ground-truth backend.
+- **Exports.** Analyzed results are held in a bounded in-memory cache (last 32)
+  keyed by `analysis_id`; `GET /api/analysis/{id}/export.{json,csv}` serve the
+  same versioned artifacts the engine's exporters produce. No database.
+- **Running separately.** Backend: `uvicorn api.main:app --port 8000` from the
+  repo root. Frontend: `cd frontend && npm install && npm run dev` (port 5173),
+  which proxies `/api` to the backend in dev; set `VITE_API_BASE` for a deployed
+  backend. See `README.md` for full setup.

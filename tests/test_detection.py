@@ -1,13 +1,20 @@
 """Detection severity, exceedance, and grouping tests (ARCHITECTURE §8.6)."""
+import numpy as np
 import pytest
 
-from vocallens.detection import _group_detections, _iou, _severity
+from vocallens.audio_io import AudioData
+from vocallens.detection import _group_detections, _iou, _severity, evaluate_phrases
+from vocallens.features import FrameFeatures
 from vocallens.schemas import (
+    AlignmentResultModel,
+    AlignmentStatus,
     Detection,
     DetectionFamily,
+    MappedPhrase,
     QualityComponents,
     Severity,
     SignalState,
+    WordTiming,
 )
 
 
@@ -60,3 +67,81 @@ def test_standalone_detection_has_no_group(analysis_config):
     d1 = _det("pace_word_rate", DetectionFamily.PACE, 0.0, 2.0, 3.0)
     merged = _group_detections([d1], analysis_config)
     assert merged[0].event_group_id is None
+
+
+# --------------------------------------------------------------------------- #
+# Utterance-level pitch variation (ARCHITECTURE §8.6 "Pitch-variation intervals")
+# --------------------------------------------------------------------------- #
+def _frame_features(f0_hz_values, n=300, sr=16000, hop=160):
+    """Minimal all-voiced, constant-energy FrameFeatures with a given F0 pattern."""
+    times = np.arange(n) * (hop / sr)
+    f0 = np.asarray(f0_hz_values, dtype=float)
+    mask = np.ones(n, dtype=bool)
+    return FrameFeatures(
+        times=times, rms_dbfs=np.full(n, -20.0), f0_hz=f0,
+        voiced_mask=mask, speech_mask=mask, noise_floor_dbfs=-60.0,
+        noise_floor_reliable=True, sr=sr, hop=hop,
+    )
+
+
+def _audio():
+    return AudioData(
+        role="r", samples=np.zeros(48000, dtype=np.float32), analysis_sr=16000,
+        original_sr=16000, channels=1, duration_seconds=3.0, peak_amplitude=0.3,
+        clipping_detected=False, clipping_fraction=0.0, channel_rms_imbalance_db=None,
+        filename="x", warnings=[],
+    )
+
+
+def _alignment(words):
+    return AlignmentResultModel(
+        role="r", backend="provided", language="en-US", status=AlignmentStatus.COMPLETE,
+        words=words, aligned_token_count=len(words), expected_token_count=len(words),
+        coverage=1.0, warnings=[], duration_seconds=3.0,
+    )
+
+
+def _pitch_setup(ref_f0, par_f0):
+    n = 300
+    ref_ff = _frame_features(ref_f0(np.arange(n)))
+    par_ff = _frame_features(par_f0(np.arange(n)))
+    words = [WordTiming(token_index=0, text="a", start=0.0, end=1.4),
+             WordTiming(token_index=1, text="b", start=1.5, end=2.99)]
+    ref_map = {0: words[0], 1: words[1]}
+    par_map = {0: words[0], 1: words[1]}
+    phrase = MappedPhrase(
+        phrase_id="phrase_00", token_indices=[0, 1], text="a b",
+        reference_start=0.0, reference_end=2.99, participant_start=0.0, participant_end=2.99,
+        matched_fraction=1.0, eligible=True,
+    )
+    return [phrase], ref_ff, par_ff, ref_map, par_map, _alignment(words), _alignment(words)
+
+
+def test_utterance_pitch_rule_detects_monotone(analysis_config):
+    """A flattened (monotone) participant pitch must emit a pitch_variation
+    detection via the whole-utterance semitone-IQR rule.
+
+    Regression guard: per-phrase pitch comparison alone missed monotone delivery
+    (recall 0.0 on the held-out pilot); the utterance-level rule restores it.
+    """
+    phrases, ref_ff, par_ff, ref_map, par_map, ref_al, par_al = _pitch_setup(
+        ref_f0=lambda i: 120.0 + 100.0 * (i % 2),   # varied F0 -> high semitone IQR
+        par_f0=lambda i: np.full_like(i, 150.0, dtype=float),  # constant -> ~0 IQR
+    )
+    _, dets = evaluate_phrases(
+        phrases, ref_ff, par_ff, [], [], ref_map, par_map,
+        _audio(), _audio(), ref_al, par_al, analysis_config)
+    pitch = [d for d in dets if d.family == DetectionFamily.PITCH_VARIATION]
+    assert any(d.rule_id == "pitch_variation_iqr_utterance" for d in pitch)
+
+
+def test_utterance_pitch_rule_no_false_positive_when_identical(analysis_config):
+    """Identical pitch on both recordings must NOT emit a pitch_variation flag."""
+    phrases, ref_ff, par_ff, ref_map, par_map, ref_al, par_al = _pitch_setup(
+        ref_f0=lambda i: 120.0 + 100.0 * (i % 2),
+        par_f0=lambda i: 120.0 + 100.0 * (i % 2),
+    )
+    _, dets = evaluate_phrases(
+        phrases, ref_ff, par_ff, [], [], ref_map, par_map,
+        _audio(), _audio(), ref_al, par_al, analysis_config)
+    assert not any(d.family == DetectionFamily.PITCH_VARIATION for d in dets)

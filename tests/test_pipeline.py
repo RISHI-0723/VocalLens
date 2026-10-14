@@ -77,6 +77,21 @@ def test_too_short_clip_fails(tmp_path, analysis_config, scoring_config):
     assert r.failure_reason
 
 
+def test_corrupt_audio_fails_honestly(tmp_path, analysis_config, scoring_config):
+    from vocallens.pipeline import analyze_pair
+
+    # A non-audio file with a .wav extension must fail decode with an honest
+    # structured error, not a crash or fabricated result.
+    bad = tmp_path / "corrupt.wav"
+    bad.write_bytes(b"this is not a RIFF/WAVE file" * 50)
+    req = _request(tmp_path, "reference")
+    req.participant_audio = str(bad)
+    r = analyze_pair(req, analysis_config, scoring_config)
+    assert r.status == AnalysisStatus.FAILED
+    assert any(w.code == "decode_failed" for w in r.warnings)
+    assert r.detections == []
+
+
 def test_alignment_unavailable_is_partial_no_fabrication(tmp_path, analysis_config, scoring_config):
     from vocallens.pipeline import analyze_pair
 

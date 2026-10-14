@@ -61,6 +61,41 @@ def test_relative_energy_uses_iqr_floor(analysis_config):
     assert np.isclose(z, 5.0 / analysis_config.features.energy_iqr_floor_db)
 
 
+def test_zrel_invariant_to_uniform_loudness_but_sensitive_to_relative_change(analysis_config):
+    """Controlled experiment (ARCHITECTURE §8.5 energy normalization, Track C).
+
+    Documents WHY a uniform amplitude drop (the synthetic ``energy_drop`` fixture)
+    is not detectable by the within-recording ``z_rel`` metric, while a
+    phrase-RELATIVE energy change is. This is a correctness property of the
+    metric, not a defect: z_rel standardizes against the recording's own
+    median/IQR specifically to be invariant to global gain/distance.
+    """
+    # A recording with three phrase regions at distinct dBFS levels.
+    phrase_a = np.full(60, -18.0)
+    phrase_b = np.full(60, -20.0)
+    phrase_c = np.full(60, -22.0)
+    rec = np.concatenate([phrase_a, phrase_b, phrase_c])
+    rec_med, rec_iqr = median_iqr(rec)
+    z_b = relative_energy_zrel(float(np.median(phrase_b)), rec_med, rec_iqr, analysis_config)
+
+    # (1) UNIFORM loudness drop: subtract 10 dB from EVERY frame (≈ x0.3 amplitude).
+    off = -10.0
+    rec_u = rec + off
+    rec_med_u, rec_iqr_u = median_iqr(rec_u)
+    z_b_u = relative_energy_zrel(float(np.median(phrase_b + off)), rec_med_u, rec_iqr_u, analysis_config)
+    assert np.isclose(z_b, z_b_u, atol=1e-9)  # invariant: the flaw is invisible to z_rel
+
+    # (2) PHRASE-RELATIVE drop: lower ONLY phrase C by 10 dB, others unchanged.
+    rec_r = np.concatenate([phrase_a, phrase_b, phrase_c + off])
+    rec_med_r, rec_iqr_r = median_iqr(rec_r)
+    z_c = relative_energy_zrel(float(np.median(phrase_c)), rec_med, rec_iqr, analysis_config)
+    z_c_r = relative_energy_zrel(float(np.median(phrase_c + off)), rec_med_r, rec_iqr_r, analysis_config)
+    # Sensitive, but only modestly: the recording IQR inflates when one phrase
+    # drops, damping the z_rel shift (z_c -0.5 -> ~-0.86). This damping is exactly
+    # why energy-dynamics recall is low on the pilot (see docs/technical_report.md).
+    assert z_c_r < z_c - 0.2
+
+
 def test_pause_detection_merges_and_min_duration(analysis_config):
     sr = 16000
     hop = analysis_config.framing.hop_length_ms / 1000.0

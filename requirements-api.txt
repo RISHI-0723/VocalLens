@@ -1,0 +1,7 @@
+# VocalLens FastAPI backend dependencies (in addition to requirements.txt).
+# Verified installed and tested on Python 3.11.9. The backend imports the
+# existing vocallens engine; it adds no scientific logic.
+fastapi==0.115.0
+uvicorn==0.32.0
+python-multipart==0.0.12
+# starlette (0.37.2) and pydantic (2.9.2) come transitively / from requirements.txt.
