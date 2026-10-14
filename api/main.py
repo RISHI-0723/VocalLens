@@ -43,13 +43,20 @@ ALLOWED_AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg"}
 
 app = FastAPI(title="VocalLens API", version=ENGINE_VERSION)
 
-# Dev-only CORS: the Vite dev server and a couple of common local ports. Not "*".
+# CORS. In dev this defaults to the Vite dev server and a couple of common
+# local ports (never "*"). In production set VOCALLENS_CORS_ORIGINS to the exact
+# deployed frontend origin(s), comma-separated. Optionally set
+# VOCALLENS_CORS_ORIGIN_REGEX to also allow that project's Vercel *preview*
+# deployments (e.g. "https://.*\\.vercel\\.app").
 _cors = os.environ.get(
     "VOCALLENS_CORS_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://localhost:3000",
 ).split(",")
+_cors_regex = os.environ.get("VOCALLENS_CORS_ORIGIN_REGEX", "").strip() or None
 app.add_middleware(
-    CORSMiddleware, allow_origins=[o.strip() for o in _cors if o.strip()],
+    CORSMiddleware,
+    allow_origins=[o.strip().rstrip("/") for o in _cors if o.strip()],
+    allow_origin_regex=_cors_regex,
     allow_methods=["GET", "POST"], allow_headers=["*"],
 )
 

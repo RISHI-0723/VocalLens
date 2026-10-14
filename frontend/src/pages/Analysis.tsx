@@ -93,6 +93,15 @@ export default function AnalysisPage() {
 
   return (
     <div className="grid" style={{ gap: 16 }}>
+      <section className="hero">
+        <h1>Compare a delivery against its reference — with the evidence.</h1>
+        <p>
+          VocalLens aligns two recordings of the same English text, localizes measurable differences in
+          pace, pauses, pitch variation and energy, and shows each candidate deviation with its timestamps,
+          values and a plain-language explanation. It does not judge ability, intent, or confidence.
+        </p>
+      </section>
+
       <div className="panel">
         <h2>Analysis workspace</h2>
         <div className="row" style={{ marginBottom: 12 }}>

@@ -27,8 +27,12 @@ env/
 models/
 ~/.cache/
 
-# Generated evaluation outputs (keep the directory, ignore generated reports)
+# Generated evaluation outputs: ignore the timestamped runs, but DO commit the
+# "latest" pointer so the deployed backend can serve real evaluation metrics
+# (the frontend Evaluation page reads /api/evaluation). Regenerate with
+# scripts/run_evaluation.py --split test.
 reports/evaluation/*.json
+!reports/evaluation/evaluation_test_latest.json
 
 # OS noise
 .DS_Store

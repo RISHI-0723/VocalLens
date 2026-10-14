@@ -13,6 +13,20 @@ an explicit quality assessment.
 > It is a comparison/coaching prototype — **not** a judge of ability, intent,
 > confidence, or emotion. A difference may be intentional or stylistic.
 
+## Live deployment
+
+| Piece    | URL | Status |
+|----------|-----|--------|
+| Frontend (Vercel) | https://vocallens-eosin.vercel.app | Deployed & publicly reachable |
+| Backend (Render)  | https://vocallens-api.onrender.com | Blueprint ready — one dashboard step to go live |
+| Health            | https://vocallens-api.onrender.com/api/health | Live once the backend deploys |
+
+The React frontend is a static site on Vercel; the FastAPI engine runs on Render.
+The production frontend build already targets the backend URL above, so the live
+site connects as soon as the Render service is up. Full instructions, free-tier
+caveats (cold starts, ephemeral storage), and reproduction steps are in
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
+
 ## Track C problem
 
 Given two recordings of the same passage, surface *where* and *how* the
@@ -172,9 +186,9 @@ can serve them; there is no database.
   does **not** demonstrate generalization to natural speech. The Track C
   real-speaker baseline requirement is **not yet satisfied**; adding such
   baselines is the top outstanding dataset task. See `data/README.md`.
-- **Public link status:** _pending_ — no Git remote is configured. Once published,
-  the repository URL (with `data/`) is the dataset location; no separate public
-  URL is claimed here.
+- **Public link:** the dataset ships in this repository at
+  <https://github.com/RISHI-0723/VocalLens> under `data/` (with `data/README.md`);
+  no separate public URL is claimed.
 
 ## Tests, evaluation, and build commands
 

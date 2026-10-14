@@ -1,0 +1,17 @@
+# Self-contained runtime requirements for the deployed FastAPI backend
+# (Render / any container Python host). Lean on purpose: it excludes the
+# dashboard-only and dev-only packages (streamlit, plotly, pandas, pytest)
+# that the HTTP engine never imports, so the image builds smaller and faster.
+# Versions match requirements.txt / requirements-api.txt, which were verified
+# on Python 3.11.9. Provenance will honestly report plotly as "unavailable"
+# here because the API runtime does not need it.
+numpy==1.26.4
+scipy==1.17.1
+librosa==0.11.0
+soundfile==0.14.0
+PyYAML==6.0.2
+pydantic==2.9.2
+pronouncing==0.3.0
+fastapi==0.115.0
+uvicorn==0.32.0
+python-multipart==0.0.12

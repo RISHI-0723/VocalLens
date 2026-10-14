@@ -1,0 +1,33 @@
+# Render Blueprint for the VocalLens FastAPI backend.
+# Deploy: Render Dashboard -> New -> Blueprint -> connect the GitHub repo.
+# Render reads this file, provisions the service, and builds from the repo root.
+#
+# Notes / honest limits of the free plan:
+#   - The service spins down after ~15 min idle; the first request after that
+#     cold-starts (tens of seconds). The frontend surfaces this as a transient
+#     "waking up / unavailable" state rather than faking a result.
+#   - Filesystem is ephemeral; VocalLens needs no persistent storage (uploads
+#     are processed in a temp file and deleted; results live in a bounded
+#     in-memory cache only long enough to export them).
+services:
+  - type: web
+    name: vocallens-api
+    runtime: python
+    plan: free
+    region: oregon
+    # Lean runtime deps (no streamlit/plotly/pandas/pytest). src/ is added to
+    # sys.path by api/main.py, so no editable install is required.
+    buildCommand: "pip install --upgrade pip && pip install -r requirements-render.txt"
+    startCommand: "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # Comma-separated list of allowed browser origins (the deployed Vercel
+      # site). This is the current production domain for the "vocallens" project.
+      - key: VOCALLENS_CORS_ORIGINS
+        value: "https://vocallens-eosin.vercel.app"
+      # Also allow this project's Vercel preview deployments.
+      - key: VOCALLENS_CORS_ORIGIN_REGEX
+        value: "https://vocallens-.*\\.vercel\\.app"
